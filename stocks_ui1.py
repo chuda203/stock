@@ -361,13 +361,14 @@ run_forecast = st.button("🔗 Submit Data", use_container_width=True, type="pri
 if run_forecast:
     try:
         with st.spinner("Fetching and processing data..."):
-            _, raw_data = get_data(stock_symbol, start_date, end_date)
+            # Fetch raw data for display (fitting + forecast period)
+            _, raw_data = get_data(stock_symbol, start_date, forecast_end_date)
             if raw_data.empty:
                 st.error("No data retrieved from Yahoo Finance. Please check the stock symbol or date range.")
                 st.stop()
 
             st.subheader(f"📋 Raw Data from Yahoo Finance ({stock_symbol})")
-            st.markdown(f"Data retrieved for the period: {start_date.strftime('%d/%m/%Y')} to {end_date.strftime('%d/%m/%Y')}")
+            st.markdown(f"Data retrieved for the period: {start_date.strftime('%d/%m/%Y')} to {forecast_end_date.strftime('%d/%m/%Y')}")
             raw_data_display = raw_data.reset_index()
             raw_data_display['Date'] = raw_data_display['Date'].dt.strftime('%Y-%m-%d')
             st.dataframe(
@@ -383,7 +384,7 @@ if run_forecast:
                     "Volume": st.column_config.NumberColumn("Volume", format="%d")
                 }
             )
-            st.markdown("This table shows the raw data retrieved from Yahoo Finance. Use it to verify if the data is complete (e.g., no missing dates or values) before fitting and forecasting.")
+            st.markdown("This table shows the raw data retrieved from Yahoo Finance for both fitting and forecast periods. Use it to verify if the data is complete (e.g., no missing dates or values) before fitting and forecasting.")
 
             closing_prices, _ = get_data(stock_symbol, start_date, end_date)
             closing_prices = [price.item() for price in closing_prices]
