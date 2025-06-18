@@ -24,10 +24,10 @@ def get_data(stock_name, start_date, end_date):
     data: pd.DataFrame = yf.download(stock_name, start=start_date, end=end_date, auto_adjust=False)
     closing_prices = data['Close']
     s_obs = closing_prices.to_numpy()
-    return s_obs
+    return s_obs, data
 
 def determine_v_n(Sn, Sn_1):
-    v_n = (Sn - Sn_1) / 1 # delta_t = 1
+    v_n = (Sn - Sn_1) / 1
     if abs(v_n) < 1e-12:
         return 1e-12 
     return v_n
@@ -154,7 +154,7 @@ def forecasting(Fitting_S_n_list, start_date, end_date, stock_symbol):
         return [], []
     fitting_S_last = Fitting_S_n_list[-4:].copy()
     try:
-        closing_prices_full = get_data(stock_symbol, start_date, end_date)
+        closing_prices_full = get_data(stock_symbol, start_date, end_date)[0]
         closing_prices_full = [price.item() for price in closing_prices_full]
         closing_prices_full = filter_prices_duplicates(closing_prices_full)
     except Exception as e:
@@ -265,7 +265,7 @@ def create_excel_download(stock_symbol, start_date, end_date, forecast_end_date,
             column_letter = column[0].column_letter
             for cell in column:
                 try:
-                    if len(str(cell.value)) > max_letter:
+                    if len(str(cell.value)) > max_length:
                         max_length = len(str(cell.value))
                 except:
                     pass
@@ -285,7 +285,6 @@ st.markdown("---")
 # Input Parameter
 st.subheader("📋 Input Parameters")
 
-# Create 4 columns for the input fields
 col1, col2, col3, col4 = st.columns(4)
 
 with col1:
@@ -304,7 +303,6 @@ with col4:
     st.markdown("**Forecast Period (Days)**")
     forecast_days = st.number_input("", min_value=1, max_value=365, value=60, step=1, key="forecast_days", label_visibility="collapsed")
 
-# Clear All Button
 def clear_all():
     st.session_state.stock_input = "BBCA.JK"
     st.session_state.start_date_input = datetime(2024, 1, 1)
@@ -317,11 +315,9 @@ def clear_all():
 
 st.button("🗑️ Clear All", on_click=clear_all, use_container_width=True)
 
-# Calculate dates based on training and forecast days
 end_date = start_date + timedelta(days=training_days)
 forecast_end_date = end_date + timedelta(days=forecast_days)
 
-# Advanced Options (Collapsible)
 with st.expander("⚙️ Advanced Options"):
     col_adv1, col_adv2 = st.columns(2)
     with col_adv1:
@@ -337,7 +333,6 @@ with st.expander("⚙️ Advanced Options"):
             custom_forecast_end = st.date_input("", value=datetime(2024, 6, 29), key="custom_forecast_end", label_visibility="collapsed")
             forecast_end_date = custom_forecast_end
 
-# Input Summary
 col_summary1, col_summary2 = st.columns(2)
 
 with col_summary1:
@@ -356,19 +351,41 @@ with col_summary2:
 
 st.markdown("---")
 
-# Validation
 if start_date >= end_date:
     st.error("Start date must be earlier than end date!")
 elif end_date >= forecast_end_date:
     st.error("End date must be earlier than forecast end date!")
 
-# Run Analysis Button
 run_forecast = st.button("🔗 Submit Data", use_container_width=True, type="primary")
 
 if run_forecast:
     try:
         with st.spinner("Fetching and processing data..."):
-            closing_prices = get_data(stock_symbol, start_date, end_date)
+            _, raw_data = get_data(stock_symbol, start_date, end_date)
+            if raw_data.empty:
+                st.error("No data retrieved from Yahoo Finance. Please check the stock symbol or date range.")
+                st.stop()
+
+            st.subheader(f"📋 Raw Data from Yahoo Finance ({stock_symbol})")
+            st.markdown(f"Data retrieved for the period: {start_date.strftime('%d/%m/%Y')} to {end_date.strftime('%d/%m/%Y')}")
+            raw_data_display = raw_data.reset_index()
+            raw_data_display['Date'] = raw_data_display['Date'].dt.strftime('%Y-%m-%d')
+            st.dataframe(
+                raw_data_display,
+                use_container_width=True,
+                column_config={
+                    "Date": st.column_config.DateColumn("Date"),
+                    "Open": st.column_config.NumberColumn("Open", format="%.2f"),
+                    "High": st.column_config.NumberColumn("High", format="%.2f"),
+                    "Low": st.column_config.NumberColumn("Low", format="%.2f"),
+                    "Close": st.column_config.NumberColumn("Close", format="%.2f"),
+                    "Adj Close": st.column_config.NumberColumn("Adj Close", format="%.2f"),
+                    "Volume": st.column_config.NumberColumn("Volume", format="%d")
+                }
+            )
+            st.markdown("This table shows the raw data retrieved from Yahoo Finance. Use it to verify if the data is complete (e.g., no missing dates or values) before fitting and forecasting.")
+
+            closing_prices, _ = get_data(stock_symbol, start_date, end_date)
             closing_prices = [price.item() for price in closing_prices]
             closing_prices = filter_prices_duplicates(closing_prices)
             if len(closing_prices) < 4:
@@ -389,6 +406,7 @@ if run_forecast:
                 mape_forecast = determine_MAPE_list(closing_forecast, S_forecast)
             else:
                 mape_forecast = []
+
         st.success("Done!")
         if Fitting_S_n_list:
             st.subheader("📊 Statistic Details")
@@ -403,6 +421,8 @@ if run_forecast:
                     st.metric("MAPE Forecast", f"{np.mean(mape_forecast):.2f}%")
             with col4:
                 st.metric("Forecast Period", f"{(forecast_end_date - end_date).days} days")
+
+            # Fitting vs Actual Chart and Table
             st.subheader(f"📊 Fitting vs Actual Chart ({stock_symbol})")
             fig_fit, ax_fit = plt.subplots(figsize=(10, 6))
             ax_fit.plot(closing_prices, label="Actual", color='black', linewidth=2)
@@ -413,6 +433,27 @@ if run_forecast:
             ax_fit.legend()
             ax_fit.grid(True, alpha=0.3)
             st.pyplot(fig_fit)
+
+            # Table for Fitting vs Actual
+            fitting_data = yf.download(stock_symbol, start=start_date, end=end_date, auto_adjust=False)
+            fitting_dates = fitting_data.index.tolist()[:len(closing_prices)]
+            fitting_df = pd.DataFrame({
+                'Date': [d.strftime('%Y-%m-%d') for d in fitting_dates],
+                'Actual Price': closing_prices,
+                'Fitted Price': Fitting_S_n_list[:len(closing_prices)]
+            })
+            st.subheader(f"📋 Fitting vs Actual Data Table ({stock_symbol})")
+            st.dataframe(
+                fitting_df,
+                use_container_width=True,
+                column_config={
+                    "Date": st.column_config.DateColumn("Date"),
+                    "Actual Price": st.column_config.NumberColumn("Actual Price", format="%.2f"),
+                    "Fitted Price": st.column_config.NumberColumn("Fitted Price", format="%.2f")
+                }
+            )
+
+            # Fitting + Forecast vs Actual Chart and Table
             if S_forecast and closing_forecast:
                 st.subheader(f"📈 Fitting + Forecast vs Actual Chart ({stock_symbol})")
                 fig_forecast, ax_forecast = plt.subplots(figsize=(12, 6))
@@ -431,6 +472,35 @@ if run_forecast:
                 ax_forecast.legend()
                 ax_forecast.grid(True, alpha=0.3)
                 st.pyplot(fig_forecast)
+
+                # Table for Fitting + Forecast vs Actual
+                forecast_data = yf.download(stock_symbol, start=end_date, end=forecast_end_date, auto_adjust=False)
+                forecast_dates = forecast_data.index.tolist()
+                if forecast_dates and fitting_dates and forecast_dates[0] <= fitting_dates[-1]:
+                    forecast_dates = forecast_dates[1:]
+                min_forecast_len = min(len(forecast_dates), len(closing_forecast), len(S_forecast))
+                forecast_dates = forecast_dates[:min_forecast_len]
+                closing_forecast = closing_forecast[:min_forecast_len]
+                S_forecast = S_forecast[:min_forecast_len]
+                combined_df = pd.DataFrame({
+                    'Date': [d.strftime('%Y-%m-%d') for d in fitting_dates + forecast_dates],
+                    'Actual Price': closing_prices + closing_forecast,
+                    'Fitted Price': Fitting_S_n_list + [None] * len(forecast_dates),
+                    'Forecast Price': [None] * len(fitting_dates) + S_forecast
+                })
+                st.subheader(f"📋 Fitting + Forecast vs Actual Data Table ({stock_symbol})")
+                st.dataframe(
+                    combined_df,
+                    use_container_width=True,
+                    column_config={
+                        "Date": st.column_config.DateColumn("Date"),
+                        "Actual Price": st.column_config.NumberColumn("Actual Price", format="%.2f"),
+                        "Fitted Price": st.column_config.NumberColumn("Fitted Price", format="%.2f"),
+                        "Forecast Price": st.column_config.NumberColumn("Forecast Price", format="%.2f")
+                    }
+                )
+
+            # MAPE Fitting Chart and Table
             if mape_fit:
                 st.subheader(f"📉 MAPE Fitting Results - Average: {np.mean(mape_fit):.2f}%")
                 fig_mape_fit, ax_mape_fit = plt.subplots(figsize=(10, 6))
@@ -441,6 +511,23 @@ if run_forecast:
                 ax_mape_fit.legend()
                 ax_mape_fit.grid(True, alpha=0.3)
                 st.pyplot(fig_mape_fit)
+
+                # Table for MAPE Fitting
+                mape_fit_df = pd.DataFrame({
+                    'Date': [d.strftime('%Y-%m-%d') for d in fitting_dates[:len(mape_fit)]],
+                    'MAPE (%)': mape_fit
+                })
+                st.subheader(f"📋 MAPE Fitting Data Table ({stock_symbol})")
+                st.dataframe(
+                    mape_fit_df,
+                    use_container_width=True,
+                    column_config={
+                        "Date": st.column_config.DateColumn("Date"),
+                        "MAPE (%)": st.column_config.NumberColumn("MAPE (%)", format="%.2f")
+                    }
+                )
+
+            # MAPE Forecast Chart and Table
             if mape_forecast:
                 st.subheader(f"📉 MAPE Forecast Results - Average: {np.mean(mape_forecast):.2f}%")
                 fig_mape_forecast, ax_mape_forecast = plt.subplots(figsize=(10, 6))
@@ -451,6 +538,22 @@ if run_forecast:
                 ax_mape_forecast.legend()
                 ax_mape_forecast.grid(True, alpha=0.3)
                 st.pyplot(fig_mape_forecast)
+
+                # Table for MAPE Forecast
+                mape_forecast_df = pd.DataFrame({
+                    'Date': [d.strftime('%Y-%m-%d') for d in forecast_dates[:len(mape_forecast)]],
+                    'MAPE (%)': mape_forecast
+                })
+                st.subheader(f"📋 MAPE Forecast Data Table ({stock_symbol})")
+                st.dataframe(
+                    mape_forecast_df,
+                    use_container_width=True,
+                    column_config={
+                        "Date": st.column_config.DateColumn("Date"),
+                        "MAPE (%)": st.column_config.NumberColumn("MAPE (%)", format="%.2f")
+                    }
+                )
+
             st.subheader("💾 Download Data")
             try:
                 excel_data = create_excel_download(
